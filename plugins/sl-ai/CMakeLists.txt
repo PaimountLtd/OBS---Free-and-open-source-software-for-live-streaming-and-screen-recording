@@ -5,7 +5,10 @@ cmake_minimum_required(VERSION 3.22...3.25)
 # ----------------------
 
 set(sl-ai_SOURCES
-	sl-ai.cpp)
+	sl-ai.cpp
+	NDKApp.cpp
+	NDKApp.h
+)
 
 add_library(sl-ai MODULE
 	${sl-ai_SOURCES})
@@ -68,6 +71,7 @@ target_include_directories(sl-ai PRIVATE C:/Users/srogers/Desktop/inworld-ndk-bu
     
 target_link_options(sl-ai PRIVATE /ignore:4099)
 
+target_compile_options(sl-ai PRIVATE /wd4251)
 target_compile_options(sl-ai PRIVATE $<$<CONFIG:RelWithDebInfo>:/Od>)
 
 set_target_properties(sl-ai PROPERTIES FOLDER "plugins")
