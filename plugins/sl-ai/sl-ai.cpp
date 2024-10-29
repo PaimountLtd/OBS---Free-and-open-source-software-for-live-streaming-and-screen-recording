@@ -4,6 +4,7 @@
 #include <obs-module.h>
 
 #include "NDKApp.h"
+#include "ConnectorFrontApi.h"
 
 //bool obs_module_load(void)
 //{

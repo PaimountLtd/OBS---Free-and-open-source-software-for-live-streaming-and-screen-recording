@@ -8,6 +8,8 @@ set(sl-ai_SOURCES
 	sl-ai.cpp
 	NDKApp.cpp
 	NDKApp.h
+  ConnectorFrontApi.cpp
+  ConnectorFrontApi.h
 )
 
 add_library(sl-ai MODULE
