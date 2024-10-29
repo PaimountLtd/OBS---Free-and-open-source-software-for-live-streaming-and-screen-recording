@@ -29,8 +29,18 @@ static const char *slai_getname(void *unused)
 	return obs_module_text("StreamlabsAI");
 }
 
+/**
+* Filter (Audio)
+*/
+
+static const char *slai_faudio_name(void *unused)
+{
+	UNUSED_PARAMETER(unused);
+	return obs_module_text("slai-audio-filter");
+}
+
 // Create
-static void *slai_create(obs_data_t *settings, obs_source_t *source)
+static void *slai_faudio_create(obs_data_t *settings, obs_source_t *source)
 {
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void func_load_device(in string input, out string output)", ConnectorFrontApi::func_load_device, data);
@@ -47,80 +57,6 @@ static void *slai_create(obs_data_t *settings, obs_source_t *source)
 	proc_handler_add(ph, "void func_stop_consumer(in string input, out string output)", ConnectorFrontApi::func_stop_consumer, data);
 	proc_handler_add(ph, "void func_stop_producer(in string input, out string output)", ConnectorFrontApi::func_stop_producer, data);
 
-	obs_source_set_audio_active(source, true);
-
-	return data;
-}
-
-// Destroy
-static void slai_destroy(void *data)
-{
-
-}
-
-static void slai_video_render(void *data, gs_effect_t *e)
-{
-}
-
-static void slai_video_tick(void *data, float seconds)
-{
-
-}
-
-static uint32_t slai_width(void *data)
-{
-	return uint32_t(100);
-}
-
-static uint32_t slai_height(void *data)
-{
-	return uint32_t(100);
-}
-
-static obs_properties_t *slai_properties(void *data)
-{
-	obs_properties_t *ppts = obs_properties_create();
-	return ppts;
-}
-
-static void slai_update(void *source, obs_data_t *settings)
-{
-	
-}
-
-static void slai_activate(void *data)
-{
-
-}
-
-static void slai_deactivate(void *data)
-{
-
-}
-
-static void slai_enum_sources(void *data, obs_source_enum_proc_t cb, void *param)
-{
-
-}
-
-static void slai_defaults(obs_data_t *settings)
-{
-
-}
-
-/**
-* Filter (Audio)
-*/
-
-static const char *slai_faudio_name(void *unused)
-{
-	UNUSED_PARAMETER(unused);
-	return obs_module_text("slai-audio-filter");
-}
-
-// Create
-static void *slai_faudio_create(obs_data_t *settings, obs_source_t *source)
-{
 	return source;
 }
 
@@ -170,45 +106,21 @@ static void slai_faudio_save(void *data, obs_data_t *settings)
 
 bool obs_module_load(void)
 {
-	struct obs_source_info mediasoup_connector = {};
-	mediasoup_connector.id = "slabsai";
-	mediasoup_connector.type = OBS_SOURCE_TYPE_INPUT;
-	mediasoup_connector.icon_type = OBS_ICON_TYPE_SLIDESHOW;
-	mediasoup_connector.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
-					   OBS_SOURCE_DO_NOT_SELF_MONITOR;
-	mediasoup_connector.get_name = slai_getname;
-
-	mediasoup_connector.create = slai_create;
-	mediasoup_connector.destroy = slai_destroy;
-
-	mediasoup_connector.update = slai_update;
-	mediasoup_connector.video_render = slai_video_render;
-	mediasoup_connector.video_tick = slai_video_tick;
-	mediasoup_connector.activate = slai_activate;
-
-	mediasoup_connector.deactivate = slai_deactivate;
-	mediasoup_connector.enum_active_sources = slai_enum_sources;
-
-	mediasoup_connector.get_width = slai_width;
-	mediasoup_connector.get_height = slai_height;
-	mediasoup_connector.get_defaults = slai_defaults;
-	mediasoup_connector.get_properties = slai_properties;
-
-	obs_register_source(&mediasoup_connector);
+	struct obs_source_info slabsai_connector = {};
 
 	// Filter (Audio)
-	struct obs_source_info mediasoup_filter_audio = {};
-	mediasoup_filter_audio.id = "slabsai_afilter";
-	mediasoup_filter_audio.type = OBS_SOURCE_TYPE_FILTER;
-	mediasoup_filter_audio.output_flags = OBS_SOURCE_AUDIO;
-	mediasoup_filter_audio.get_name = slai_faudio_name;
-	mediasoup_filter_audio.create = slai_faudio_create;
-	mediasoup_filter_audio.destroy = slai_faudio_destroy;
-	mediasoup_filter_audio.update = slai_faudio_update;
-	mediasoup_filter_audio.filter_audio = slai_faudio_filter_audio;
-	mediasoup_filter_audio.get_properties = slai_faudio_properties;
-	mediasoup_filter_audio.save = slai_faudio_save;
+	struct obs_source_info slabsai_filter_audio = {};
+	slabsai_filter_audio.id = "slabsai_afilter";
+	slabsai_filter_audio.type = OBS_SOURCE_TYPE_FILTER;
+	slabsai_filter_audio.output_flags = OBS_SOURCE_AUDIO;
+	slabsai_filter_audio.get_name = slai_faudio_name;
+	slabsai_filter_audio.create = slai_faudio_create;
+	slabsai_filter_audio.destroy = slai_faudio_destroy;
+	slabsai_filter_audio.update = slai_faudio_update;
+	slabsai_filter_audio.filter_audio = slai_faudio_filter_audio;
+	slabsai_filter_audio.get_properties = slai_faudio_properties;
+	slabsai_filter_audio.save = slai_faudio_save;
 
-	obs_register_source(&mediasoup_filter_audio);
+	obs_register_source(&slabsai_filter_audio);
 	return true;
 }
