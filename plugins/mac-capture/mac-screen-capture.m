@@ -400,6 +400,18 @@ static bool init_screen_stream(struct screen_capture *sc)
 		return target_display;
 	};
 
+	void (^set_display_mode)(struct screen_capture *, SCDisplay *) = ^void(
+		struct screen_capture *capture_data,
+		SCDisplay *target_display) {
+		CGDisplayModeRef display_mode =
+			CGDisplayCopyDisplayMode(target_display.displayID);
+		[capture_data->stream_properties
+			setWidth:CGDisplayModeGetPixelWidth(display_mode)];
+		[capture_data->stream_properties
+			setHeight:CGDisplayModeGetPixelHeight(display_mode)];
+		CGDisplayModeRelease(display_mode);
+	};
+
 	MACCAP_LOG(LOG_WARNING, "Capture type: %d", sc->capture_type);
 	switch (sc->capture_type) {
 	case ScreenCaptureDisplayStream: {
