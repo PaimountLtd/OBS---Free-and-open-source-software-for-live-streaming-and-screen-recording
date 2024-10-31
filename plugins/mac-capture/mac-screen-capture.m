@@ -374,7 +374,11 @@ static bool init_screen_stream(struct screen_capture *sc)
 			[[NSWorkspace sharedWorkspace] openURL:url];
 		});
 
-		return false;
+		// Initialize sc even if permission is not granted
+		sc->disp = NULL;
+		os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+		os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+		return true;
 	}
 
 	MACCAP_LOG(LOG_WARNING, "Initializing stream configuration");
@@ -420,7 +424,12 @@ static bool init_screen_stream(struct screen_capture *sc)
 		if (!target_display) {
 			MACCAP_ERR("Target display not found");
 			os_sem_post(sc->shareable_content_available);
-			return false;
+			
+			// Initialize sc even if target display is not found
+			sc->disp = NULL;
+			os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+			os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+			return true;
 		}
 
 		MACCAP_LOG(LOG_WARNING, "Creating content filter for display ID: %d", target_display.displayID);
@@ -452,7 +461,12 @@ static bool init_screen_stream(struct screen_capture *sc)
 		if (!target_window) {
 			MACCAP_ERR("Target window not found. Window ID: %d", sc->window);
 			os_sem_post(sc->shareable_content_available);
-			return false;
+			
+			// Initialize sc even if target window is not found
+			sc->disp = NULL;
+			os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+			os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+			return true;
 		}
 
 		MACCAP_LOG(LOG_WARNING, "Creating content filter for window ID: %d", target_window.windowID);
@@ -469,7 +483,12 @@ static bool init_screen_stream(struct screen_capture *sc)
 		if (!target_display) {
 			MACCAP_ERR("Target display not found for application capture");
 			os_sem_post(sc->shareable_content_available);
-			return false;
+			
+			// Initialize sc even if target display is not found
+			sc->disp = NULL;
+			os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+			os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+			return true;
 		}
 
 		MACCAP_LOG(LOG_WARNING, "Searching for application with bundle ID: %s", [sc->application_id UTF8String]);
@@ -485,7 +504,12 @@ static bool init_screen_stream(struct screen_capture *sc)
 		if (!target_application) {
 			MACCAP_ERR("Target application not found with bundle ID: %s", [sc->application_id UTF8String]);
 			os_sem_post(sc->shareable_content_available);
-			return false;
+			
+			// Initialize sc even if target application is not found
+			sc->disp = NULL;
+			os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+			os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+			return true;
 		}
 
 		MACCAP_LOG(LOG_WARNING, "Creating content filter for application");
@@ -529,9 +553,25 @@ static bool init_screen_stream(struct screen_capture *sc)
 		return true;
 	}
 
+	// Check if content_filter is initialized
+	if (!content_filter) {
+		MACCAP_ERR("Content filter is not initialized");
+		sc->disp = NULL;
+		os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+		os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+		return true;
+	}
+
 	MACCAP_LOG(LOG_WARNING, "Initializing SCStream");
 	sc->disp = [[SCStream alloc] initWithFilter:content_filter configuration:sc->stream_properties delegate:nil];
 	[content_filter release];
+
+	if (!sc->disp) {
+		MACCAP_ERR("Failed to initialize SCStream");
+		os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+		os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+		return true;
+	}
 
 	NSError *addStreamOutputError = nil;
 	MACCAP_LOG(LOG_WARNING, "Adding stream output");
@@ -541,7 +581,13 @@ static bool init_screen_stream(struct screen_capture *sc)
 		NSString *errorDescription = addStreamOutputError ? [addStreamOutputError localizedDescription] : @"Unknown error";
 		MACCAP_ERR("Failed to add stream output with error: %s", [errorDescription cStringUsingEncoding:NSUTF8StringEncoding]);
 		[addStreamOutputError release];
-		return false;
+
+		// Release sc->disp and set to NULL
+		[sc->disp release];
+		sc->disp = NULL;
+		os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+		os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+		return true;
 	}
 
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000
@@ -553,7 +599,13 @@ static bool init_screen_stream(struct screen_capture *sc)
 			NSString *errorDescription = addStreamOutputError ? [addStreamOutputError localizedDescription] : @"Unknown error";
 			MACCAP_ERR("Failed to add audio stream output with error: %s", [errorDescription cStringUsingEncoding:NSUTF8StringEncoding]);
 			[addStreamOutputError release];
-			return false;
+
+			// Release sc->disp and set to NULL
+			[sc->disp release];
+			sc->disp = NULL;
+			os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
+			os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
+			return true;
 		}
 	}
 #endif
@@ -561,45 +613,51 @@ static bool init_screen_stream(struct screen_capture *sc)
 	os_event_init(&sc->disp_finished, OS_EVENT_TYPE_MANUAL);
 	os_event_init(&sc->stream_start_completed, OS_EVENT_TYPE_MANUAL);
 
-	MACCAP_LOG(LOG_WARNING, "Starting capture");
-	__block BOOL did_stream_start = false;
-	[sc->disp startCaptureWithCompletionHandler:^(NSError *_Nullable error) {
-		did_stream_start = (error == nil);
-		if (!did_stream_start) {
-			NSString *errorDescription = error ? [error localizedDescription] : @"Unknown error";
-			MACCAP_ERR("Failed to start capture with error: %s", [errorDescription cStringUsingEncoding:NSUTF8StringEncoding]);
+	if (sc->disp) {
+		MACCAP_LOG(LOG_WARNING, "Starting capture");
+		__block BOOL did_stream_start = false;
+		[sc->disp startCaptureWithCompletionHandler:^(NSError *_Nullable error) {
+			did_stream_start = (error == nil);
+			if (!did_stream_start) {
+				NSString *errorDescription = error ? [error localizedDescription] : @"Unknown error";
+				MACCAP_ERR("Failed to start capture with error: %s", [errorDescription cStringUsingEncoding:NSUTF8StringEncoding]);
 
-			if ([error.domain isEqualToString:@"com.apple.ScreenCaptureKit.ErrorDomain"]) {
-				MACCAP_LOG(LOG_WARNING, "ScreenCaptureKit error domain detected, code: %ld", (long)error.code);
-				NSInteger permissionDeniedErrorCode = -3801;
-				if (error.code == permissionDeniedErrorCode) {
-					MACCAP_ERR("Permission denied error detected");
-					dispatch_async(dispatch_get_main_queue(), ^{
-						NSAlert *alert = [[NSAlert alloc] init];
-						[alert setMessageText:@"Screen Recording Permission Denied"];
-						[alert setInformativeText:@"Please grant Screen Recording permission in System Preferences > Security & Privacy > Privacy > Screen Recording, then restart the application."];
-						[alert addButtonWithTitle:@"OK"];
-						[alert runModal];
-						[alert release];
+				if ([error.domain isEqualToString:@"com.apple.ScreenCaptureKit.ErrorDomain"]) {
+					MACCAP_LOG(LOG_WARNING, "ScreenCaptureKit error domain detected, code: %ld", (long)error.code);
+					NSInteger permissionDeniedErrorCode = -3801;
+					if (error.code == permissionDeniedErrorCode) {
+						MACCAP_ERR("Permission denied error detected");
+						dispatch_async(dispatch_get_main_queue(), ^{
+							NSAlert *alert = [[NSAlert alloc] init];
+							[alert setMessageText:@"Screen Recording Permission Denied"];
+							[alert setInformativeText:@"Please grant Screen Recording permission in System Preferences > Security & Privacy > Privacy > Screen Recording, then restart the application."];
+							[alert addButtonWithTitle:@"OK"];
+							[alert runModal];
+							[alert release];
 
-						NSURL *url = [NSURL fileURLWithPath:@"/System/Library/PreferencePanes/Security.prefPane"];
-						[[NSWorkspace sharedWorkspace] openURL:url];
-					});
+							NSURL *url = [NSURL fileURLWithPath:@"/System/Library/PreferencePanes/Security.prefPane"];
+							[[NSWorkspace sharedWorkspace] openURL:url];
+						});
+					}
 				}
+
+				[sc->disp release];
+				sc->disp = NULL;
+			} else {
+				MACCAP_LOG(LOG_WARNING, "Capture started successfully");
 			}
+			os_event_signal(sc->stream_start_completed);
+		}];
 
-			[sc->disp release];
-			sc->disp = NULL;
-		} else {
-			MACCAP_LOG(LOG_WARNING, "Capture started successfully");
-		}
+		MACCAP_LOG(LOG_WARNING, "Waiting for stream start completion");
+		os_event_wait(sc->stream_start_completed);
+		MACCAP_LOG(LOG_WARNING, "Stream initialization %s", did_stream_start ? "succeeded" : "failed");
+	} else {
+		MACCAP_ERR("SCStream is not initialized, skipping capture start");
 		os_event_signal(sc->stream_start_completed);
-	}];
+	}
 
-	MACCAP_LOG(LOG_WARNING, "Waiting for stream start completion");
-	os_event_wait(sc->stream_start_completed);
-	MACCAP_LOG(LOG_WARNING, "Stream initialization %s", did_stream_start ? "succeeded" : "failed");
-	return did_stream_start;
+	return true;
 }
 
 static void screen_capture_build_content_list(struct screen_capture *sc,
