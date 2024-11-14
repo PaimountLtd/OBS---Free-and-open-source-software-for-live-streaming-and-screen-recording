@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2015 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -58,9 +58,9 @@ static inline size_t convert_time_to_frames(size_t sample_rate, uint64_t t)
 	return (size_t)util_mul_div64(t, sample_rate, 1000000000ULL);
 }
 
-static inline void mix_audio(struct audio_output_data *mixes,
-			     obs_source_t *source, size_t channels,
-			     size_t sample_rate, struct ts_info *ts)
+static void mix_audio(struct audio_data_mixes_outputs *mixes,
+		      obs_source_t *source, size_t channels, size_t sample_rate,
+		      struct ts_info *ts)
 {
 	size_t total_floats = AUDIO_OUTPUT_FRAMES;
 	size_t start_point = 0;
@@ -76,19 +76,27 @@ static inline void mix_audio(struct audio_output_data *mixes,
 
 		total_floats -= start_point;
 	}
+	for (size_t canvas_idx = 0; canvas_idx < mixes->outputs.num;
+	     canvas_idx++) {
+		for (size_t mix_idx = 0; mix_idx < MAX_AUDIO_MIXES; mix_idx++) {
+			for (size_t ch = 0; ch < channels; ch++) {
+				register float *mix =
+					mixes->outputs.array[canvas_idx]
+						.output[mix_idx]
+						.data[ch];
+				register float *aud =
+					get_source_audio_output_buf(source,
+								    canvas_idx,
+								    mix_idx,
+								    ch);
+				register float *end;
 
-	for (size_t mix_idx = 0; mix_idx < MAX_AUDIO_MIXES; mix_idx++) {
-		for (size_t ch = 0; ch < channels; ch++) {
-			register float *mix = mixes[mix_idx].data[ch];
-			register float *aud =
-				source->audio_output_buf[mix_idx][ch];
-			register float *end;
+				mix += start_point;
+				end = aud + total_floats;
 
-			mix += start_point;
-			end = aud + total_floats;
-
-			while (aud < end)
-				*(mix++) += *(aud++);
+				while (aud < end)
+					*(mix++) += *(aud++);
+			}
 		}
 	}
 }
@@ -105,8 +113,8 @@ static bool ignore_audio(obs_source_t *source, size_t channels,
 		     name);
 #endif
 		for (size_t ch = 0; ch < channels; ch++)
-			circlebuf_pop_front(&source->audio_input_buf[ch], NULL,
-					    source->audio_input_buf[0].size);
+			deque_pop_front(&source->audio_input_buf[ch], NULL,
+					source->audio_input_buf[0].size);
 		source->last_audio_input_buf_size = 0;
 		return false;
 	}
@@ -126,8 +134,8 @@ static bool ignore_audio(obs_source_t *source, size_t channels,
 		     (uint64_t)drop, (uint64_t)num_floats);
 #endif
 		for (size_t ch = 0; ch < channels; ch++)
-			circlebuf_pop_front(&source->audio_input_buf[ch], NULL,
-					    drop * sizeof(float));
+			deque_pop_front(&source->audio_input_buf[ch], NULL,
+					drop * sizeof(float));
 
 		source->last_audio_input_buf_size = 0;
 		source->audio_ts +=
@@ -188,8 +196,8 @@ static bool discard_if_stopped(obs_source_t *source, size_t channels)
 		}
 
 		for (size_t ch = 0; ch < channels; ch++)
-			circlebuf_pop_front(&source->audio_input_buf[ch], NULL,
-					    source->audio_input_buf[ch].size);
+			deque_pop_front(&source->audio_input_buf[ch], NULL,
+					source->audio_input_buf[ch].size);
 
 		source->pending_stop = false;
 		source->audio_ts = 0;
@@ -292,7 +300,7 @@ static inline void discard_audio(struct obs_core_audio *audio,
 	}
 
 	for (size_t ch = 0; ch < channels; ch++)
-		circlebuf_pop_front(&source->audio_input_buf[ch], NULL, size);
+		deque_pop_front(&source->audio_input_buf[ch], NULL, size);
 
 	source->last_audio_input_buf_size = 0;
 
@@ -353,8 +361,8 @@ static void set_fixed_audio_buffering(struct obs_core_audio *audio,
 		     new_ts.start, new_ts.end);
 #endif
 
-		circlebuf_push_front(&audio->buffered_timestamps, &new_ts,
-				     sizeof(new_ts));
+		deque_push_front(&audio->buffered_timestamps, &new_ts,
+				 sizeof(new_ts));
 	}
 
 	*ts = new_ts;
@@ -427,8 +435,8 @@ static void add_audio_buffering(struct obs_core_audio *audio,
 		     new_ts.start, new_ts.end);
 #endif
 
-		circlebuf_push_front(&audio->buffered_timestamps, &new_ts,
-				     sizeof(new_ts));
+		deque_push_front(&audio->buffered_timestamps, &new_ts,
+				 sizeof(new_ts));
 	}
 
 	*ts = new_ts;
@@ -520,7 +528,7 @@ static inline void execute_audio_tasks(void)
 		pthread_mutex_lock(&audio->task_mutex);
 		if (audio->tasks.size) {
 			struct obs_task_info info;
-			circlebuf_pop_front(&audio->tasks, &info, sizeof(info));
+			deque_pop_front(&audio->tasks, &info, sizeof(info));
 			info.task(info.param);
 		}
 		tasks_remaining = !!audio->tasks.size;
@@ -530,7 +538,7 @@ static inline void execute_audio_tasks(void)
 
 bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in,
 		    uint64_t *out_ts, uint32_t mixers,
-		    struct audio_output_data *mixes)
+		    struct audio_data_mixes_outputs *mixes)
 {
 	struct obs_core_data *data = &obs->data;
 	struct obs_core_audio *audio = &obs->audio;
@@ -544,8 +552,8 @@ bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in,
 	da_resize(audio->render_order, 0);
 	da_resize(audio->root_nodes, 0);
 
-	circlebuf_push_back(&audio->buffered_timestamps, &ts, sizeof(ts));
-	circlebuf_peek_front(&audio->buffered_timestamps, &ts, sizeof(ts));
+	deque_push_back(&audio->buffered_timestamps, &ts, sizeof(ts));
+	deque_peek_front(&audio->buffered_timestamps, &ts, sizeof(ts));
 	min_ts = ts.start;
 
 	audio_size = AUDIO_OUTPUT_FRAMES * sizeof(float);
@@ -555,18 +563,34 @@ bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in,
 #endif
 
 	/* ------------------------------------------------ */
-	/* build audio render order
-	 * NOTE: these are source channels, not audio channels */
-	for (uint32_t i = 0; i < MAX_CHANNELS; i++) {
-		obs_source_t *source = obs_get_output_source(i);
-		if (source) {
+	/* build audio render order */
+
+	pthread_mutex_lock(&obs->video.mixes_mutex);
+	for (size_t j = 0; j < obs->video.mixes.num; j++) {
+		struct obs_view *view = obs->video.mixes.array[j]->view;
+		if (!view)
+			continue;
+
+		pthread_mutex_lock(&view->channels_mutex);
+
+		/* NOTE: these are source channels, not audio channels */
+		for (uint32_t i = 0; i < MAX_CHANNELS; i++) {
+			obs_source_t *source = view->channels[i];
+			if (!source)
+				continue;
+			if (!obs_source_active(source))
+				continue;
+
 			obs_source_enum_active_tree(source, push_audio_tree,
 						    audio);
 			push_audio_tree(NULL, source, audio);
-			da_push_back(audio->root_nodes, &source);
-			obs_source_release(source);
+
+			if (obs->video.mixes.array[j] == obs->video.main_mix)
+				da_push_back(audio->root_nodes, &source);
 		}
+		pthread_mutex_unlock(&view->channels_mutex);
 	}
+	pthread_mutex_unlock(&obs->video.mixes_mutex);
 
 	pthread_mutex_lock(&data->audio_sources_mutex);
 
@@ -646,7 +670,8 @@ bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in,
 
 			pthread_mutex_lock(&source->audio_buf_mutex);
 
-			if (source->audio_output_buf[0][0] && source->audio_ts)
+			if (get_source_audio_output_buf(source, 0, 0, 0) &&
+			    source->audio_ts)
 				mix_audio(mixes, source, channels, sample_rate,
 					  &ts);
 
@@ -673,7 +698,7 @@ bool audio_callback(void *param, uint64_t start_ts_in, uint64_t end_ts_in,
 	/* release audio sources */
 	release_audio_sources(audio);
 
-	circlebuf_pop_front(&audio->buffered_timestamps, NULL, sizeof(ts));
+	deque_pop_front(&audio->buffered_timestamps, NULL, sizeof(ts));
 
 	*out_ts = ts.start;
 

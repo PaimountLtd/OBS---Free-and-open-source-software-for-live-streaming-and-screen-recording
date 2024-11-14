@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 #include "media-io-defs.h"
 #include "../util/c99defs.h"
 #include "../util/util_uint64.h"
+#include "../util/darray.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +28,7 @@ extern "C" {
 
 #define MAX_AUDIO_MIXES 6
 #define MAX_AUDIO_CHANNELS 8
+#define MAX_DEVICE_INPUT_CHANNELS 64
 #define AUDIO_OUTPUT_FRAMES 1024
 
 #define TOTAL_AUDIO_SIZE                                              \
@@ -85,10 +87,14 @@ struct audio_output_data {
 	float *data[MAX_AUDIO_CHANNELS];
 };
 
+struct audio_data_mixes_outputs {
+	DARRAY(struct obs_source_audio_mix) outputs;
+};
+
 typedef bool (*audio_input_callback_t)(void *param, uint64_t start_ts,
 				       uint64_t end_ts, uint64_t *new_ts,
 				       uint32_t active_mixers,
-				       struct audio_output_data *mixes);
+				       struct audio_data_mixes_outputs *mixes);
 
 struct audio_output_info {
 	const char *name;
